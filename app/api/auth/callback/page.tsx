@@ -32,6 +32,15 @@ function CallbackContent() {
     hasExchanged.current = true;
 
     const verifier = localStorage.getItem('spotify_code_verifier');
+    const expectedState = localStorage.getItem('spotify_auth_state');
+    localStorage.removeItem('spotify_auth_state');
+    if (!expectedState || searchParams.get('state') !== expectedState) {
+      // Asynchrone pour respecter react-hooks/set-state-in-effect
+      Promise.resolve().then(() =>
+        setExchangeError('Paramètre state invalide, réessaie de te connecter')
+      );
+      return;
+    }
     if (!verifier) {
       // Asynchrone pour respecter react-hooks/set-state-in-effect
       Promise.resolve().then(() =>
@@ -52,7 +61,7 @@ function CallbackContent() {
         console.error('[OAuth callback]', err);
         setExchangeError(err.message ?? "Échec de l'échange du token");
       });
-  }, [code, paramError, router]);
+  }, [code, paramError, router, searchParams]);
 
   const error = paramError ?? exchangeError;
   if (error) {
