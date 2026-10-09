@@ -52,6 +52,10 @@ function savePlayHistory(userId: string, plays: PlayEvent[]): void {
   }
 }
 
+export function clearPlayHistory(userId: string): void {
+  localStorage.removeItem(storageKey(userId));
+}
+
 // Synchro partagée : évite deux fusions concurrentes (StrictMode, plusieurs composants)
 let syncPromise: Promise<SyncResult> | null = null;
 
