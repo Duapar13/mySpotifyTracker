@@ -16,9 +16,13 @@ export default function SpotifyLoginButton() {
     const verifier = generateCodeVerifier();
     const challenge = await generateCodeChallenge(verifier);
 
-    localStorage.setItem('spotify_code_verifier', verifier);
+    // Le state est vérifié au retour du callback : protège contre une redirection forgée (CSRF)
+    const state = generateCodeVerifier(32);
 
-    window.location.href = buildSpotifyAuthorizeUrl(challenge);
+    localStorage.setItem('spotify_code_verifier', verifier);
+    localStorage.setItem('spotify_auth_state', state);
+
+    window.location.href = buildSpotifyAuthorizeUrl(challenge, state);
   };
 
   return (
