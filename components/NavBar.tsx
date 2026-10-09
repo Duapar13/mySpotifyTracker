@@ -7,6 +7,8 @@ const LINKS = [
   { href: '/wrapped', label: 'Wrapped' },
   { href: '/history', label: 'Historique' },
   { href: '/library', label: 'Bibliothèque' },
+  { href: '/trends', label: 'Tendances' },
+  { href: '/share', label: 'Partager' },
 ];
 
 export default function NavBar() {
@@ -21,7 +23,7 @@ export default function NavBar() {
         <Link href="/" className="font-bold tracking-tight">
           <span className="text-green-500">●</span> My Spotify Tracker
         </Link>
-        <ul className="ml-auto flex gap-1 text-sm">
+        <ul className="ml-auto flex flex-wrap justify-end gap-1 text-sm">
           {LINKS.map(({ href, label }) => {
             const active = pathname === href;
             return (
