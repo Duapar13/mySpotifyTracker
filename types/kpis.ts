@@ -26,6 +26,8 @@ export interface PeriodStats {
   mainstreamScore: number | null;
   // Nombre de genres différents parmi les top artistes
   distinctGenres: number;
+  // Part des top artistes (0–1) pour lesquels au moins un genre est connu : fiabilité des top genres
+  genreCoverage: number;
   // Nombre d'artistes différents crédités sur les top tracks
   distinctArtistsInTopTracks: number;
 }
