@@ -120,13 +120,25 @@ interface MusicBrainzArtistResponse {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// Toutes les requêtes MusicBrainz passent par cette file, qui les espace d'au moins 1,1 s
+// Toutes les requêtes MusicBrainz passent par cette file, qui les espace d'au moins 1,1 s.
+// Les appels sont chaînés : deux enrichissements simultanés (StrictMode en dev, plusieurs pages)
+// ne peuvent pas envoyer de requêtes en parallèle et dépasser la limite.
 let lastMusicBrainzCall = 0;
-async function musicBrainzFetch<T>(path: string): Promise<T | null> {
-  const elapsed = Date.now() - lastMusicBrainzCall;
-  if (elapsed < MUSICBRAINZ_DELAY_MS) await wait(MUSICBRAINZ_DELAY_MS - elapsed);
-  lastMusicBrainzCall = Date.now();
+let musicBrainzQueue: Promise<unknown> = Promise.resolve();
 
+function musicBrainzFetch<T>(path: string): Promise<T | null> {
+  const run = async (): Promise<T | null> => {
+    const elapsed = Date.now() - lastMusicBrainzCall;
+    if (elapsed < MUSICBRAINZ_DELAY_MS) await wait(MUSICBRAINZ_DELAY_MS - elapsed);
+    lastMusicBrainzCall = Date.now();
+    return doMusicBrainzFetch<T>(path);
+  };
+  const result = musicBrainzQueue.then(run, run);
+  musicBrainzQueue = result.catch(() => undefined);
+  return result;
+}
+
+async function doMusicBrainzFetch<T>(path: string): Promise<T | null> {
   const response = await fetch(`${MUSICBRAINZ_API_URL}${path}`, {
     headers: { Accept: 'application/json' },
   });
@@ -170,12 +182,45 @@ export interface EnrichmentReport {
   failed: number;
 }
 
+export interface EnrichmentProgress {
+  report: EnrichmentReport;
+  // Genres connus à cet instant (Spotify, cache, ou déjà trouvés)
+  genresById: Map<string, string[]>;
+  // Artistes dont la recherche n'est pas terminée
+  remaining: number;
+}
+
+interface EnrichOptions {
+  // Appelé dès que de nouveaux genres sont connus : permet d'afficher le Wrapped sans attendre
+  onProgress?: (progress: EnrichmentProgress) => void;
+}
+
+// Genres déjà connus sans aucun appel réseau (fournis par Spotify ou en cache) : instantané,
+// pour afficher un premier résultat pendant que le reste est recherché.
+export function getKnownGenres(artists: Artist[]): Map<string, string[]> {
+  const cache = readCache();
+  const known = new Map<string, string[]>();
+  for (const artist of artists) {
+    if (artist.genres.length > 0) known.set(artist.id, normalizeGenres(artist.genres));
+    else if (isFresh(cache[artist.id])) known.set(artist.id, cache[artist.id].genres);
+  }
+  return known;
+}
+
+// Ajoute des entrées au cache sans écraser celles écrites entre-temps par un autre appel
+function persistCache(entries: GenreCache): void {
+  writeCache({ ...readCache(), ...entries });
+}
+
 // Complète Artist.genres pour les artistes qui n'en ont pas. Ne lève jamais d'erreur :
 // si une source est en panne, les genres manquants restent vides.
+// L'ordre du tableau fixe la priorité de recherche (les premiers sont traités en premier).
 export async function enrichArtistGenres(
-  artists: Artist[]
+  artists: Artist[],
+  { onProgress }: EnrichOptions = {}
 ): Promise<{ artists: Artist[]; report: EnrichmentReport }> {
   const cache = readCache();
+  const newEntries: GenreCache = {};
   const genresById = new Map<string, string[]>();
   const report: EnrichmentReport = {
     total: artists.length,
@@ -199,6 +244,10 @@ export async function enrichArtistGenres(
     }
   }
 
+  const emit = (remaining: number) =>
+    onProgress?.({ report: { ...report }, genresById: new Map(genresById), remaining });
+  emit(missing.length);
+
   // 2. Wikidata, en une requête
   if (missing.length > 0) {
     try {
@@ -207,11 +256,13 @@ export async function enrichArtistGenres(
         const genres = normalizeGenres(wikidata.get(id) ?? []);
         if (genres.length > 0) {
           genresById.set(id, genres);
-          cache[id] = { genres, source: 'wikidata', fetchedAt: Date.now() };
+          newEntries[id] = { genres, source: 'wikidata', fetchedAt: Date.now() };
           report.fromWikidata++;
         }
       }
       missing = missing.filter((id) => !genresById.has(id));
+      persistCache(newEntries);
+      emit(missing.length);
     } catch (err) {
       // Wikidata en panne : MusicBrainz prend le relais pour tout le monde
       console.warn('[artistGenres] Wikidata indisponible', err);
@@ -219,7 +270,14 @@ export async function enrichArtistGenres(
   }
 
   // 3. MusicBrainz, un artiste à la fois (rate limit)
-  for (const id of missing) {
+  for (const [index, id] of missing.entries()) {
+    // Un autre enrichissement en cours (StrictMode, autre page) a pu trouver cet artiste entre-temps
+    const cached = readCache()[id];
+    if (isFresh(cached)) {
+      if (cached.genres.length > 0) genresById.set(id, cached.genres);
+      report.fromCache++;
+      continue;
+    }
     try {
       const genres = normalizeGenres(await fetchMusicBrainzGenres(id));
       if (genres.length > 0) {
@@ -228,19 +286,21 @@ export async function enrichArtistGenres(
       } else {
         report.notFound++;
       }
-      cache[id] = {
+      newEntries[id] = {
         genres,
         source: genres.length > 0 ? 'musicbrainz' : null,
         fetchedAt: Date.now(),
       };
+      // Sauvegarde à chaque artiste : quitter la page ne fait pas perdre le travail déjà fait
+      persistCache({ [id]: newEntries[id] });
     } catch (err) {
       // Panne : pas de mise en cache, l'artiste sera re-tenté au prochain chargement
       console.warn(`[artistGenres] MusicBrainz indisponible pour ${id}`, err);
       report.failed++;
     }
+    emit(missing.length - index - 1);
   }
 
-  writeCache(cache);
   debugLog(report);
 
   return {

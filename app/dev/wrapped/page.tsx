@@ -1,41 +1,30 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { getWrappedKpis } from '@/services/wrapped';
+import GenresProgress from '@/components/GenresProgress';
+import { useWrappedKpis } from '@/hooks/useWrappedKpis';
 import { TIME_RANGES } from '@/types/spotify';
 
 // Page de vérification réservée au dev : KPIs Wrapped V1 sur les 3 périodes (#13)
-// et couverture de l'enrichissement des genres (#31)
-type Result = { kpis: Awaited<ReturnType<typeof getWrappedKpis>> } | { error: string };
-
+// et couverture de l'enrichissement des genres (#31). Affichage progressif : les genres
+// se complètent pendant que MusicBrainz répond.
 export default function WrappedDevPage() {
-  const [result, setResult] = useState<Result | null>(null);
-
-  useEffect(() => {
-    if (process.env.NEXT_PUBLIC_APP_ENV !== 'development') return;
-
-    getWrappedKpis()
-      .then((kpis) => setResult({ kpis }))
-      .catch((err) => setResult({ error: err.message }));
-  }, []);
-
   if (process.env.NEXT_PUBLIC_APP_ENV !== 'development') {
     return <p className="p-8">Page disponible uniquement en développement.</p>;
   }
-  if (!result) {
-    return (
-      <p className="p-8">
-        Calcul des KPIs... (le premier chargement peut prendre ~1 min : enrichissement des genres
-        via MusicBrainz, limité à 1 requête/seconde)
-      </p>
-    );
-  }
-  if ('error' in result) return <p className="p-8 text-red-500">{result.error}</p>;
+  return <WrappedDev />;
+}
+
+function WrappedDev() {
+  const result = useWrappedKpis();
+
+  if (result.status === 'loading') return <p className="p-8">Chargement des données Spotify...</p>;
+  if (result.status === 'error') return <p className="p-8 text-red-500">{result.message}</p>;
 
   const report = result.kpis.genresReport;
 
   return (
     <div className="space-y-4 p-8">
+      <GenresProgress progress={result.genres} />
       <p className="text-sm text-zinc-500">
         Genres de {report.total} artistes uniques : {report.fromCache} en cache ·{' '}
         {report.fromWikidata} Wikidata · {report.fromMusicBrainz} MusicBrainz · {report.notFound}{' '}
