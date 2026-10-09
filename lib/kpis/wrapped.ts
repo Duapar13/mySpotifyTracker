@@ -65,6 +65,10 @@ export function computePeriodStats(tracks: Track[], artists: Artist[]): PeriodSt
         ? Math.round(popularities.reduce((sum, value) => sum + value, 0) / popularities.length)
         : null,
     distinctGenres: new Set(artists.flatMap((artist) => artist.genres)).size,
+    genreCoverage:
+      artists.length > 0
+        ? artists.filter((artist) => artist.genres.length > 0).length / artists.length
+        : 0,
     // Tous les artistes crédités comptent, featurings compris
     distinctArtistsInTopTracks: new Set(
       tracks.flatMap((track) => track.artists.map((artist) => artist.id))
